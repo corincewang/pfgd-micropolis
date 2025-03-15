@@ -86,7 +86,7 @@ class Bulldozer extends ToolStroke
 			// dozing over water, replace with water.
 			eff.setTile(0, 0, RIVER);
 		}
-		else if (isRubble(tile))
+		if (isRubble(tile))
 		{
 			// dozing over rubble, replace with land (less dots)
 			eff.setTile(0, 0, DIRT);
