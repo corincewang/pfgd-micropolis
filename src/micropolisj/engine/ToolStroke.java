@@ -10,6 +10,10 @@ package micropolisj.engine;
 
 import static micropolisj.engine.TileConstants.*;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
 public class ToolStroke
 {
 	final Micropolis city;
@@ -195,42 +199,96 @@ public class ToolStroke
 		}
 	}
 
-	boolean applyParkTool(ToolEffectIfc eff)
-	{
+	boolean applyParkTool(ToolEffectIfc eff) {
 		int cost = tool.getToolCost();
-
+		
 		if (eff.getTile(0, 0) != DIRT) {
-			// some sort of bulldozing is necessary
+			// If the tile is not dirt, check if bulldozing is allowed
 			if (!city.autoBulldoze) {
 				eff.toolResult(ToolResult.UH_OH);
 				return false;
 			}
 
-			//FIXME- use a canAutoBulldoze-style function here
 			if (isRubble(eff.getTile(0, 0))) {
-				// this tile can be auto-bulldozed
 				cost++;
-			}
-			else {
-				// cannot be auto-bulldozed
+			} else {
 				eff.toolResult(ToolResult.UH_OH);
 				return false;
 			}
 		}
 
+		// Randomly select the park type (WOODS or FOUNTAIN)
 		int z = inPreview ? 0 : city.PRNG.nextInt(5);
 		int tile;
+		double pollutionReductionPercent = 0.004;  // Default pollution reduction (0.4%)
+
 		if (z < 4) {
 			tile = WOODS2 + z;
+			pollutionReductionPercent = 0.003; // Woods reduce pollution slightly less
 		} else {
 			tile = FOUNTAIN;
+			pollutionReductionPercent = 0.002; // Fountain reduces pollution even less
 		}
 
 		eff.spend(cost);
 		eff.setTile(0, 0, tile);
 
+		// Calculate the total pollution reduction
+		int gridArea = tool.getWidth() * tool.getHeight();
+		double pollutionReduction = gridArea * pollutionReductionPercent * 255;
+
+		// Adjust the pollution reduction based on the city's current pollution level
+		double cityPollutionLevel = city.pollutionAverage;
+		double pollutionFactor = Math.max(1.0, cityPollutionLevel / 100.0);
+		pollutionReduction *= pollutionFactor;
+
+		// Apply pollution reduction to the affected area (5x5 region around the park)
+		for (int x = 0; x < city.pollutionMem.length; x++) {
+			for (int y = 0; y < city.pollutionMem[0].length; y++) {
+				if (isInParkArea(x, y, eff.getTile(x, y), tile, xpos, ypos)) {
+					city.pollutionMem[x][y] = Math.max(0, city.pollutionMem[x][y] - (int)pollutionReduction);
+				}
+			}
+		}
+
+		// Update the average pollution in the city
+		int totalPollution = 0;
+		for (int x = 0; x < city.pollutionMem.length; x++) {
+			for (int y = 0; y < city.pollutionMem[0].length; y++) {
+				totalPollution += city.pollutionMem[x][y];
+			}
+		}
+		city.pollutionAverage = totalPollution / (city.pollutionMem.length * city.pollutionMem[0].length);
+
+		// Start a scheduled task to print average pollution every 10 seconds
+		// startPollutionTimer();
+
 		return true;
 	}
+
+	// Modify the park area to affect a larger area (5x5)
+	private boolean isInParkArea(int x, int y, int currentTile, int parkTile, int xpos, int ypos) {
+		// Expand the effect range to a 5x5 grid (distance of 2 tiles from the park)
+		return (currentTile == parkTile || Math.abs(x - xpos) <= 2 && Math.abs(y - ypos) <= 2);
+	}
+
+	// ScheduledExecutorService to print average pollution every 10 seconds
+	// private void startPollutionTimer() {
+	// 	ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
+	// 	scheduler.scheduleAtFixedRate(() -> {
+	// 		int totalPollution = 0;
+	// 		for (int x = 0; x < city.pollutionMem.length; x++) {
+	// 			for (int y = 0; y < city.pollutionMem[0].length; y++) {
+	// 				totalPollution += city.pollutionMem[x][y];
+	// 			}
+	// 		}
+
+	// 		// Recalculate average pollution
+	// 		city.pollutionAverage = totalPollution / (city.pollutionMem.length * city.pollutionMem[0].length);
+	// 		System.out.println("Average Pollution: " + city.pollutionAverage);
+	// 	}, 0, 10, TimeUnit.SECONDS); // Initial delay 0, then repeat every 10 seconds
+	// }
 
 	protected void fixZone(int xpos, int ypos)
 	{
