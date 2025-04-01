@@ -199,16 +199,15 @@ public class ToolStroke
 		}
 	}
 
+
 	boolean applyParkTool(ToolEffectIfc eff) {
 		int cost = tool.getToolCost();
-		
+	
 		if (eff.getTile(0, 0) != DIRT) {
-			// If the tile is not dirt, check if bulldozing is allowed
 			if (!city.autoBulldoze) {
 				eff.toolResult(ToolResult.UH_OH);
 				return false;
 			}
-
 			if (isRubble(eff.getTile(0, 0))) {
 				cost++;
 			} else {
@@ -216,42 +215,54 @@ public class ToolStroke
 				return false;
 			}
 		}
-
-		// Randomly select the park type (WOODS or FOUNTAIN)
+	
 		int z = inPreview ? 0 : city.PRNG.nextInt(5);
 		int tile;
-		double pollutionReductionPercent = 0.004;  // Default pollution reduction (0.4%)
-
+		double pollutionReductionPercent = 0.001;
+	
 		if (z < 4) {
 			tile = WOODS2 + z;
-			pollutionReductionPercent = 0.003; // Woods reduce pollution slightly less
+			pollutionReductionPercent = 0.0005;
 		} else {
 			tile = FOUNTAIN;
-			pollutionReductionPercent = 0.002; // Fountain reduces pollution even less
+			pollutionReductionPercent = 0.0003;
 		}
-
+	
 		eff.spend(cost);
 		eff.setTile(0, 0, tile);
-
-		// Calculate the total pollution reduction
+	
+		// Reduce pollution only in a local 3x3 range (radius = 1)
 		int gridArea = tool.getWidth() * tool.getHeight();
 		double pollutionReduction = gridArea * pollutionReductionPercent * 255;
-
-		// Adjust the pollution reduction based on the city's current pollution level
 		double cityPollutionLevel = city.pollutionAverage;
 		double pollutionFactor = Math.max(1.0, cityPollutionLevel / 100.0);
 		pollutionReduction *= pollutionFactor;
-
-		// Apply pollution reduction to the affected area (5x5 region around the park)
-		for (int x = 0; x < city.pollutionMem.length; x++) {
-			for (int y = 0; y < city.pollutionMem[0].length; y++) {
-				if (isInParkArea(x, y, eff.getTile(x, y), tile, xpos, ypos)) {
-					city.pollutionMem[x][y] = Math.max(0, city.pollutionMem[x][y] - (int)pollutionReduction);
+	
+		int cx = xpos / 2;
+		int cy = ypos / 2;
+		int radius = 1;
+	
+		for (int dx = -radius; dx <= radius; dx++) {
+			for (int dy = -radius; dy <= radius; dy++) {
+				int nx = cx + dx;
+				int ny = cy + dy;
+	
+				if (nx >= 0 && ny >= 0 && nx < city.pollutionMem.length && ny < city.pollutionMem[0].length) {
+					double distance = Math.sqrt(dx * dx + dy * dy);
+					if (distance <= 1.5) {
+						double decay = 1.0 - (distance / 1.5);
+						int reduction = (int)(pollutionReduction * decay);
+						int before = city.pollutionMem[nx][ny];
+						city.pollutionMem[nx][ny] = Math.max(0, before - reduction);
+					}
 				}
 			}
 		}
-
-		// Update the average pollution in the city
+	
+		// ➕ Add persistent park effect to parkEffectMem
+		city.parkEffectMem[cy][cx] += 1;
+	
+		// Update city's pollution average
 		int totalPollution = 0;
 		for (int x = 0; x < city.pollutionMem.length; x++) {
 			for (int y = 0; y < city.pollutionMem[0].length; y++) {
@@ -259,36 +270,12 @@ public class ToolStroke
 			}
 		}
 		city.pollutionAverage = totalPollution / (city.pollutionMem.length * city.pollutionMem[0].length);
-
-		// Start a scheduled task to print average pollution every 10 seconds
-		// startPollutionTimer();
-
+	
 		return true;
 	}
+	
 
-	// Modify the park area to affect a larger area (5x5)
-	private boolean isInParkArea(int x, int y, int currentTile, int parkTile, int xpos, int ypos) {
-		// Expand the effect range to a 5x5 grid (distance of 2 tiles from the park)
-		return (currentTile == parkTile || Math.abs(x - xpos) <= 2 && Math.abs(y - ypos) <= 2);
-	}
-
-	// ScheduledExecutorService to print average pollution every 10 seconds
-	// private void startPollutionTimer() {
-	// 	ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-
-	// 	scheduler.scheduleAtFixedRate(() -> {
-	// 		int totalPollution = 0;
-	// 		for (int x = 0; x < city.pollutionMem.length; x++) {
-	// 			for (int y = 0; y < city.pollutionMem[0].length; y++) {
-	// 				totalPollution += city.pollutionMem[x][y];
-	// 			}
-	// 		}
-
-	// 		// Recalculate average pollution
-	// 		city.pollutionAverage = totalPollution / (city.pollutionMem.length * city.pollutionMem[0].length);
-	// 		System.out.println("Average Pollution: " + city.pollutionAverage);
-	// 	}, 0, 10, TimeUnit.SECONDS); // Initial delay 0, then repeat every 10 seconds
-	// }
+	
 
 	protected void fixZone(int xpos, int ypos)
 	{

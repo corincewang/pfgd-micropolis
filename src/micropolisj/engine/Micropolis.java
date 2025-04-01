@@ -44,6 +44,9 @@ public class Micropolis
 	 */
 	public int [][] pollutionMem;
 
+	public int[][] parkEffectMem;
+
+
 	/**
 	 * For each 2x2 section of the city, the crime level of the city (0-250).
 	 * 0 is no crime; 250 is maximum crime.
@@ -231,6 +234,8 @@ public class Micropolis
 		crimeMem = new int[hY][hX];
 		popDensity = new int[hY][hX];
 		trfDensity = new int[hY][hX];
+		parkEffectMem = new int[hY][hX];  // persistent pollution reduction
+
 
 		int qX = (width+3)/4;
 		int qY = (height+3)/4;
@@ -1133,7 +1138,7 @@ public class Micropolis
 		}
 	}
 
-	//power, terrain, land value
+	
 	void ptlScan()
 	{
 		final int qX = (getWidth()+3)/4;
@@ -1146,48 +1151,45 @@ public class Micropolis
 		final int HWLDX = (getWidth()+1)/2;
 		final int HWLDY = (getHeight()+1)/2;
 		int [][] tem = new int[HWLDY][HWLDX];
-		for (int x = 0; x < HWLDX; x++)
-		{
-			for (int y = 0; y < HWLDY; y++)
-			{
+
+		for (int x = 0; x < HWLDX; x++) {
+			for (int y = 0; y < HWLDY; y++) {
 				int plevel = 0;
 				int lvflag = 0;
-				int zx = 2*x;
-				int zy = 2*y;
+				int zx = 2 * x;
+				int zy = 2 * y;
 
-				for (int mx = zx; mx <= zx+1; mx++)
-				{
-					for (int my = zy; my <= zy+1; my++)
-					{
+				for (int mx = zx; mx <= zx+1; mx++) {
+					for (int my = zy; my <= zy+1; my++) {
 						int tile = getTile(mx, my);
-						if (tile != DIRT)
-						{
-							if (tile < RUBBLE) //natural land features
-							{
-								//inc terrainMem
-								qtem[y/2][x/2] += 15;
+						if (tile != DIRT) {
+							if (tile < RUBBLE) {
+								qtem[y/2][x/2] += 15; // terrain boost
 								continue;
 							}
 							plevel += getPollutionValue(tile);
-							if (isConstructed(tile))
+							if (isConstructed(tile)) {
 								lvflag++;
+							}
 						}
 					}
 				}
 
 				if (plevel < 0)
-					plevel = 250; //?
-
+					plevel = 250;
 				if (plevel > 255)
 					plevel = 255;
 
+				// Apply persistent pollution reduction from parks
+				int parkEffect = parkEffectMem[y][x];
+				if (parkEffect >= 0 && plevel >= 0) {
+					plevel -= parkEffect * 0.2;  // each unit reduces 3 pollution
+				}
+
+
 				tem[y][x] = plevel;
 
-				if (lvflag != 0)
-				{
-					//land value equation
-
-
+				if (lvflag != 0) {
 					int dis = 34 - getDisCC(x, y);
 					dis *= 4;
 					dis += terrainMem[y/2][x/2];
@@ -1195,47 +1197,38 @@ public class Micropolis
 					if (crimeMem[y][x] > 190) {
 						dis -= 20;
 					}
-					if (dis > 250)
-						dis = 250;
-					if (dis < 1)
-						dis = 1;
+					dis = Math.min(250, Math.max(1, dis));
 					landValueMem[y][x] = dis;
 					landValueTotal += dis;
 					landValueCount++;
-				}
-				else
-				{
+				} else {
 					landValueMem[y][x] = 0;
 				}
 			}
 		}
 
-		landValueAverage = landValueCount != 0 ? (landValueTotal/landValueCount) : 0;
+		landValueAverage = landValueCount != 0 ? (landValueTotal / landValueCount) : 0;
 
+		// Smooth pollution
 		tem = doSmooth(tem);
 		tem = doSmooth(tem);
 
+		// Save to pollutionMem and track max
 		int pcount = 0;
 		int ptotal = 0;
 		int pmax = 0;
-		for (int x = 0; x < HWLDX; x++)
-		{
-			for (int y = 0; y < HWLDY; y++)
-			{
+		for (int x = 0; x < HWLDX; x++) {
+			for (int y = 0; y < HWLDY; y++) {
 				int z = tem[y][x];
 				pollutionMem[y][x] = z;
 
-				if (z != 0)
-				{
+				if (z != 0) {
 					pcount++;
 					ptotal += z;
-
-					if (z > pmax ||
-						(z == pmax && PRNG.nextInt(4) == 0))
-					{
+					if (z > pmax || (z == pmax && PRNG.nextInt(4) == 0)) {
 						pmax = z;
-						pollutionMaxLocationX = 2*x;
-						pollutionMaxLocationY = 2*y;
+						pollutionMaxLocationX = 2 * x;
+						pollutionMaxLocationY = 2 * y;
 					}
 				}
 			}
@@ -1243,10 +1236,49 @@ public class Micropolis
 
 		pollutionAverage = pcount != 0 ? (ptotal / pcount) : 0;
 
+		// 🌳 Persistent pollution reduction from placed parks
+for (int x = 0; x < getWidth(); x++) {
+	for (int y = 0; y < getHeight(); y++) {
+		int tile = getTile(x, y);
+		if (isParkTile(tile)) {
+			int cx = x / 2;
+			int cy = y / 2;
+			int radius = 1; // Only affect 3x3 area
+
+			for (int dx = -radius; dx <= radius; dx++) {
+				for (int dy = -radius; dy <= radius; dy++) {
+					int nx = cx + dx;
+					int ny = cy + dy;
+
+					// Check bounds
+					if (nx >= 0 && ny >= 0 && nx < pollutionMem.length && ny < pollutionMem[0].length) {
+						// Distance must be strictly within 1.5 (tile center + diagonals)
+						double dist = Math.sqrt(dx * dx + dy * dy);
+						if (dist <= 1.5) {
+							double decay = 1.0 - (dist / 1.5);
+							int reduction = (int)(1.5 * decay); // Max 1–2 reduction
+
+							pollutionMem[nx][ny] = Math.max(0, pollutionMem[nx][ny] - reduction);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+
 		terrainMem = smoothTerrain(qtem);
 
-		fireMapOverlayDataChanged(MapState.POLLUTE_OVERLAY);   //PLMAP
-		fireMapOverlayDataChanged(MapState.LANDVALUE_OVERLAY); //LVMAP
+		fireMapOverlayDataChanged(MapState.POLLUTE_OVERLAY);
+		fireMapOverlayDataChanged(MapState.LANDVALUE_OVERLAY);
+
+		parkEffectMem = doSmooth(parkEffectMem);
+
+	}
+
+	private boolean isParkTile(int tile) {
+		return (tile >= WOODS2 && tile <= WOODS2 + 3) || tile == FOUNTAIN;
 	}
 
 	public CityLocation getLocationOfMaxPollution()
